@@ -1,0 +1,1 @@
+# Events module for football analysis
