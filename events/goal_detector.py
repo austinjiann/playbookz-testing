@@ -1,12 +1,13 @@
 import os
 import numpy as np
 
-# Configurable thresholds
-GOAL_ZONE_WIDTH_PCT = float(os.getenv('GOAL_ZONE_WIDTH_PCT', '0.15'))
+# Configurable thresholds - tightened for better accuracy
+GOAL_ZONE_WIDTH_PCT = float(os.getenv('GOAL_ZONE_WIDTH_PCT', '0.08'))  # Reduced from 0.15
 GOAL_COOLDOWN_SECONDS = float(os.getenv('GOAL_COOLDOWN_SECONDS', '3.0'))
-CONSECUTIVE_FRAMES_REQ = int(os.getenv('CONSECUTIVE_FRAMES_REQ', '3'))
-GOAL_Y_BAND_TOP = float(os.getenv('GOAL_Y_BAND_TOP', '0.3'))
-GOAL_Y_BAND_BOTTOM = float(os.getenv('GOAL_Y_BAND_BOTTOM', '0.8'))
+CONSECUTIVE_FRAMES_REQ = int(os.getenv('CONSECUTIVE_FRAMES_REQ', '5'))  # Increased from 3
+GOAL_Y_BAND_TOP = float(os.getenv('GOAL_Y_BAND_TOP', '0.4'))  # Tightened from 0.3
+GOAL_Y_BAND_BOTTOM = float(os.getenv('GOAL_Y_BAND_BOTTOM', '0.7'))  # Tightened from 0.8
+REQUIRE_BALL_MOVEMENT_INTO_GOAL = True  # New: require ball to move INTO goal zone
 
 def detect_goals(ball_track, team_possession_history, frame_size, fps):
     """
@@ -39,16 +40,21 @@ def detect_goals(ball_track, team_possession_history, frame_size, fps):
     current_goal_zone = None
     last_goal_frame = -1
     cooldown_frames = int(GOAL_COOLDOWN_SECONDS * fps)
+    previous_ball_position = None
+    ball_entered_goal_zone = False  # Track if ball moved into goal zone
     
     for frame_num, ball_frame_data in enumerate(ball_track):
         if not ball_frame_data or 1 not in ball_frame_data:
             consecutive_in_goal = 0
             current_goal_zone = None
+            ball_entered_goal_zone = False
+            previous_ball_position = None
             continue
             
         ball_bbox = ball_frame_data[1]['bbox']
         ball_center_x = (ball_bbox[0] + ball_bbox[2]) / 2
         ball_center_y = (ball_bbox[1] + ball_bbox[3]) / 2
+        current_ball_position = (ball_center_x, ball_center_y)
         
         # Check if ball is in goal zone
         in_left_goal = (left_goal_zone[0] <= ball_center_x <= left_goal_zone[1] and 
@@ -59,15 +65,29 @@ def detect_goals(ball_track, team_possession_history, frame_size, fps):
         if in_left_goal or in_right_goal:
             goal_zone = 'left' if in_left_goal else 'right'
             
+            # Check if ball moved INTO goal zone (not just present in it)
+            if REQUIRE_BALL_MOVEMENT_INTO_GOAL and previous_ball_position:
+                prev_in_left = (left_goal_zone[0] <= previous_ball_position[0] <= left_goal_zone[1] and 
+                               left_goal_zone[2] <= previous_ball_position[1] <= left_goal_zone[3])
+                prev_in_right = (right_goal_zone[0] <= previous_ball_position[0] <= right_goal_zone[1] and 
+                                right_goal_zone[2] <= previous_ball_position[1] <= right_goal_zone[3])
+                
+                # Ball entered goal zone if it wasn't in goal zone before
+                if not (prev_in_left or prev_in_right):
+                    ball_entered_goal_zone = True
+            else:
+                ball_entered_goal_zone = True  # Skip movement check if disabled
+            
             if goal_zone == current_goal_zone:
                 consecutive_in_goal += 1
             else:
                 consecutive_in_goal = 1
                 current_goal_zone = goal_zone
             
-            # Goal detected if consecutive frames requirement met and cooldown passed
+            # Goal detected if consecutive frames requirement met, cooldown passed, and ball entered goal zone
             if (consecutive_in_goal >= CONSECUTIVE_FRAMES_REQ and 
-                frame_num - last_goal_frame > cooldown_frames):
+                frame_num - last_goal_frame > cooldown_frames and
+                ball_entered_goal_zone):
                 
                 # Determine scoring team from recent possession history
                 possession_lookback_frames = min(int(2.0 * fps), frame_num)
@@ -97,5 +117,9 @@ def detect_goals(ball_track, team_possession_history, frame_size, fps):
         else:
             consecutive_in_goal = 0
             current_goal_zone = None
+            ball_entered_goal_zone = False
+        
+        # Update previous ball position for next frame
+        previous_ball_position = current_ball_position
     
     return goals

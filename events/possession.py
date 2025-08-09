@@ -3,7 +3,7 @@ import sys
 sys.path.append('../')
 from utils import measure_distance, get_center_of_bbox
 
-POSSESSION_DISTANCE = float(os.getenv('POSSESSION_DISTANCE', '70'))
+POSSESSION_DISTANCE = float(os.getenv('POSSESSION_DISTANCE', '40'))  # Match pass detector
 
 def calculate_possession(tracks, ball_track, team_assignments):
     """

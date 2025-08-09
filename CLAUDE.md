@@ -102,7 +102,9 @@ The YOLO model detects:
 - Uses K-means clustering on player shirt colors from bounding box top half
 - Extracts player cluster by excluding corner background clusters
 - Assigns team colors (team 1 and team 2) based on clustering results
-- Special case: Player ID 91 is hardcoded to team 1 (line 68-69 in team_assigner.py)
+- Finds frame with maximum players for reliable color analysis (requires 4+ players)
+- Includes validation and fallback logic when color separation fails
+- High unknown possession percentage indicates team assignment issues
 
 ### Camera Movement Compensation
 - Uses optical flow to detect camera movement between frames
@@ -123,22 +125,25 @@ The YOLO model detects:
 ## Event Detection
 
 ### Goal Detection (`events/goal_detector.py`)
-- Defines left and right goal zones based on configurable width percentage
-- Requires ball to be in goal zone for consecutive frames
-- Applies cooldown period between goals to avoid duplicates
-- Uses Y-band filtering to avoid corner flag false positives
-- Determines scoring team from recent possession history
+- Defines narrow goal zones (8% of screen width) to avoid false positives
+- Requires ball movement INTO goal zone, not just presence in zone
+- Requires ball in goal zone for 5+ consecutive frames
+- Uses tight Y-band filtering (40-70% height) to avoid corner flags
+- Applies 3-second cooldown between goals
+- Determines scoring team from recent possession history (2-second lookback)
 
 ### Pass Detection (`events/pass_detector.py`)
 - Detects possession changes between same-team players
-- Validates timing constraints (max 1.5 seconds)
-- Validates distance constraints (minimum ball travel)
+- Validates timing constraints (max 0.8 seconds for quick transitions)
+- Validates distance constraints (minimum 25px ball travel)
+- Requires stable possession (2+ frames) before counting changes
+- Uses 40px possession distance threshold
 - Counts completed passes per team
 
 ### Possession Calculation (`events/possession.py`)
-- Tracks nearest player to ball each frame within distance threshold
+- Tracks nearest player to ball each frame within 40px distance threshold
 - Calculates possession percentages for each team
-- Handles unknown possession periods
+- Handles unknown possession periods (indicates team assignment issues if >30%)
 - Returns percentages rounded to 1 decimal place
 
 ## Configuration
@@ -146,17 +151,18 @@ The YOLO model detects:
 ### Environment Variables
 Thresholds can be customized via environment variables:
 
-**Goal Detection:**
-- `GOAL_ZONE_WIDTH_PCT`: Goal zone width as percentage of field width (default: 0.15)
+**Goal Detection (Tuned for Accuracy):**
+- `GOAL_ZONE_WIDTH_PCT`: Goal zone width as percentage of field width (default: 0.08)
 - `GOAL_COOLDOWN_SECONDS`: Minimum seconds between goals (default: 3.0)
-- `CONSECUTIVE_FRAMES_REQ`: Frames ball must be in goal (default: 3)
-- `GOAL_Y_BAND_TOP`: Top Y boundary for goal zone (default: 0.3)
-- `GOAL_Y_BAND_BOTTOM`: Bottom Y boundary for goal zone (default: 0.8)
+- `CONSECUTIVE_FRAMES_REQ`: Frames ball must be in goal (default: 5)
+- `GOAL_Y_BAND_TOP`: Top Y boundary for goal zone (default: 0.4)
+- `GOAL_Y_BAND_BOTTOM`: Bottom Y boundary for goal zone (default: 0.7)
 
-**Pass/Possession Detection:**
-- `MIN_PASS_DISTANCE`: Minimum ball travel distance for pass (default: 5.0)
-- `MAX_PASS_TIME`: Maximum time for pass transition (default: 1.5)
-- `POSSESSION_DISTANCE`: Distance threshold for possession (default: 70)
+**Pass/Possession Detection (Tuned for Accuracy):**
+- `MIN_PASS_DISTANCE`: Minimum ball travel distance for pass (default: 25.0)
+- `MAX_PASS_TIME`: Maximum time for pass transition (default: 0.8)
+- `POSSESSION_DISTANCE`: Distance threshold for possession (default: 40)
+- `POSSESSION_STABILITY_FRAMES`: Frames required for stable possession (default: 2)
 
 ## JSON Output Format
 
@@ -183,3 +189,36 @@ Thresholds can be customized via environment variables:
   }
 }
 ```
+
+## Debugging and Troubleshooting
+
+### Common Issues
+
+**High Unknown Possession (>30%)**
+- Indicates team assignment failure due to similar jersey colors
+- Check console output for "Team assignment successful" message
+- Try different input videos with more distinct team colors
+
+**Over-counting Passes**
+- Reduce `POSSESSION_DISTANCE` from 40 to 30 pixels
+- Increase `MIN_PASS_DISTANCE` from 25 to 50 pixels
+- Increase `POSSESSION_STABILITY_FRAMES` from 2 to 3
+
+**False Goal Detection**
+- Goals triggered by ball going out of bounds or camera movement
+- Reduce `GOAL_ZONE_WIDTH_PCT` from 0.08 to 0.05
+- Increase `CONSECUTIVE_FRAMES_REQ` from 5 to 7
+
+### Performance Notes
+
+- **Processing Time**: ~2-5 minutes per 10 seconds of video (depends on hardware)
+- **YOLO Inference**: Main bottleneck (~700-900ms per batch of 20 frames)
+- **Stub Caching**: Use `read_from_stub=True` for faster repeated runs
+- **Memory Usage**: Loads entire video into memory for processing
+
+### Video Requirements
+
+- **Format**: MP4, AVI supported via OpenCV
+- **Resolution**: Any resolution (processed at 384x640 for YOLO)
+- **Content**: Clear view of football field with distinct team colors
+- **Quality**: Higher quality videos produce better detection results

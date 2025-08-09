@@ -4,9 +4,10 @@ sys.path.append('../')
 from utils import measure_distance, get_center_of_bbox
 
 # Configurable thresholds
-MIN_PASS_DISTANCE = float(os.getenv('MIN_PASS_DISTANCE', '5.0'))
-MAX_PASS_TIME = float(os.getenv('MAX_PASS_TIME', '1.5'))
-POSSESSION_DISTANCE = float(os.getenv('POSSESSION_DISTANCE', '70'))
+MIN_PASS_DISTANCE = float(os.getenv('MIN_PASS_DISTANCE', '25.0'))  # Increased from 5.0
+MAX_PASS_TIME = float(os.getenv('MAX_PASS_TIME', '0.8'))  # Decreased from 1.5
+POSSESSION_DISTANCE = float(os.getenv('POSSESSION_DISTANCE', '40'))  # Decreased from 70
+POSSESSION_STABILITY_FRAMES = int(os.getenv('POSSESSION_STABILITY_FRAMES', '2'))  # New: require stable possession
 
 def detect_passes(tracks, team_assignments, fps):
     """
@@ -29,6 +30,7 @@ def detect_passes(tracks, team_assignments, fps):
     last_possessor = None
     last_possession_frame = None
     last_ball_position = None
+    current_possessor_frames = {}  # Track how long each player has possessed ball
     
     for frame_num, (player_frame, ball_frame) in enumerate(zip(tracks['players'], tracks['ball'])):
         if not ball_frame or 1 not in ball_frame:
@@ -81,10 +83,26 @@ def detect_passes(tracks, team_assignments, fps):
                             elif current_team == 2:
                                 pass_counts["team2"] += 1
         
-        # Update possession tracking
+        # Update possession tracking with stability requirement
         if current_possessor:
-            last_possessor = current_possessor
-            last_possession_frame = frame_num
-            last_ball_position = ball_position
+            # Track possession stability
+            if current_possessor not in current_possessor_frames:
+                current_possessor_frames[current_possessor] = 0
+            current_possessor_frames[current_possessor] += 1
+            
+            # Only update if possession is stable (held for required frames)
+            if (current_possessor_frames[current_possessor] >= POSSESSION_STABILITY_FRAMES and
+                current_possessor != last_possessor):
+                last_possessor = current_possessor
+                last_possession_frame = frame_num
+                last_ball_position = ball_position
+                
+            # Reset other players' possession counters
+            for player_id in list(current_possessor_frames.keys()):
+                if player_id != current_possessor:
+                    current_possessor_frames[player_id] = 0
+        else:
+            # No possessor, reset all counters
+            current_possessor_frames.clear()
     
     return pass_counts

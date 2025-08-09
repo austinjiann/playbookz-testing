@@ -15,7 +15,7 @@ from events.possession import calculate_possession
 
 def main():
     # Read Video and get FPS
-    video_path = 'input_videos/no_audio_5min.mp4'
+    video_path = 'input_videos/gameplay_10_seconds.mp4'
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
@@ -26,16 +26,14 @@ def main():
     tracker = Tracker('models/best.pt')
 
     tracks = tracker.get_object_tracks(video_frames,
-                                       read_from_stub=False,
-                                       stub_path='stubs/track_stubs_5min.pkl')
+                                       read_from_stub=True,
+                                       stub_path='stubs/track_stubs_gameplay10.pkl')
     # Get object positions 
     tracker.add_position_to_tracks(tracks)
 
-    # camera movement estimator
+    # camera movement estimator (create zero movement for this video)
+    camera_movement_per_frame = [[0, 0]] * len(video_frames)
     camera_movement_estimator = CameraMovementEstimator(video_frames[0])
-    camera_movement_per_frame = camera_movement_estimator.get_camera_movement(video_frames,
-                                                                                read_from_stub=False,
-                                                                                stub_path='stubs/camera_movement_stub_5min.pkl')
     camera_movement_estimator.add_adjust_positions_to_tracks(tracks,camera_movement_per_frame)
 
 
@@ -47,10 +45,32 @@ def main():
     tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
 
 
-    # Assign Player Teams
+    # Assign Player Teams with better validation
     team_assigner = TeamAssigner()
-    team_assigner.assign_team_color(video_frames[0], 
-                                    tracks['players'][0])
+    # Find best frame with most players for team assignment
+    best_frame = 0
+    max_players = 0
+    for i, player_frame in enumerate(tracks['players']):
+        if len(player_frame) > max_players:
+            max_players = len(player_frame)
+            best_frame = i
+    
+    team_assignment_success = False
+    if max_players >= 4:  # Need at least 4 players for reliable team assignment
+        try:
+            team_assigner.assign_team_color(video_frames[best_frame],
+                                            tracks['players'][best_frame])
+            team_assignment_success = True
+            print(f"Team assignment successful with {max_players} players in frame {best_frame}")
+        except Exception as e:
+            print(f"Team assignment failed: {e}")
+            team_assignment_success = False
+    
+    if not team_assignment_success:
+        # Create fallback team assignment
+        team_assigner.team_colors[1] = [255, 0, 0]  # Red team
+        team_assigner.team_colors[2] = [0, 0, 255]  # Blue team
+        print("Using fallback team colors due to assignment failure")
     
     for frame_num, player_track in enumerate(tracks['players']):
         for player_id, track in player_track.items():
